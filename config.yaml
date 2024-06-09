@@ -1,0 +1,22 @@
+debug: false
+prepare: false
+
+data_dir: "/home/pervinco/Datasets/leash-bio"
+output_dir: "/home/pervinco/Datasets/leash-bio/preprocessed"
+
+train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
+test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
+
+limit: 10000
+radius: 2
+vec_dim: 1024
+
+target_proteins:
+  - HSA
+  - sEH
+  - BRD4
+
+uniprot_dicts:
+  sEH: "P34913"
+  BRD4: "O60885"
+  HSA: "P02768"
