@@ -1,5 +1,6 @@
 import os
 import json
+import joblib
 import duckdb
 import numpy as np
 import pandas as pd
@@ -48,9 +49,12 @@ def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
     total_rows_query = f"SELECT COUNT(*) FROM '{test_parquet_path}'"
     total_rows = conn.execute(total_rows_query).fetchone()[0]
 
-    weights_dir = os.path.join(saved_dir, 'weights')
-    performance_file = os.path.join(saved_dir, 'model_performance.json')
-    models = load_top_k_models(weights_dir, performance_file, k)
+    performance_file = os.path.join(f"{saved_dir}/utils", 'model_performance.json')
+    models = load_top_k_models(performance_file, k)
+
+    # Load the descriptor normalizer
+    normalizer_path = os.path.join(saved_dir, 'utils', 'descriptor_normalizer.pkl')
+    preprocessor = joblib.load(normalizer_path)
 
     result_file = './my_submission.csv'
     with open(result_file, 'w') as f:
@@ -66,7 +70,7 @@ def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
         print(f"{offset:>09} : {chunk_df.shape}")
 
         smiles_list = chunk_df['molecule_smiles'].tolist()
-        results = process_smiles_list(smiles_list, radius, dim, desc=False)
+        results = process_smiles_list(smiles_list, radius, dim, desc=True)
 
         fingerprints = [result['fingerprint'] for result in results]
         chunk_df['fingerprints'] = fingerprints
@@ -75,12 +79,20 @@ def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
         chunk_df = pd.concat([chunk_df, fingerprint_df], axis=1)
         chunk_df.drop(columns=['fingerprints'], inplace=True)
 
-        ctd_df = pd.read_parquet(f"{saved_dir}/normalized_ctd.parquet", engine='pyarrow')
+        ctd_df = pd.read_parquet(f"{saved_dir}/utils/normalized_ctd.parquet", engine='pyarrow')
         chunk_df = pd.merge(chunk_df, ctd_df, on='protein_name', how='left')
 
         protein_one_hot = pd.get_dummies(chunk_df['protein_name'], prefix='protein_')
         chunk_df = pd.concat([chunk_df, protein_one_hot], axis=1)
         chunk_df.drop(columns=['protein_name'], inplace=True)
+
+        descriptors_list = [result['descriptors'] for result in results]
+        descriptor_df = pd.DataFrame(descriptors_list)        
+        excluded_descriptors = descriptor_df.columns[descriptor_df.isna().any()].tolist()
+        descriptor_df.drop(columns=excluded_descriptors, inplace=True)
+        descriptor_df = pd.DataFrame(preprocessor.transform(descriptor_df), columns=descriptor_df.columns)
+        
+        chunk_df = pd.concat([chunk_df, descriptor_df], axis=1)
 
         exclude_columns = ['buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles', 'molecule_smiles']
         chunk_df.drop(columns=exclude_columns, inplace=True)

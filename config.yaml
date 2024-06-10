@@ -4,13 +4,13 @@ prepare: false
 data_dir: "/home/pervinco/Datasets/leash-bio"
 output_dir: "/home/pervinco/Datasets/leash-bio/preprocessed"
 save_dir: "/home/pervinco/Models/leash-bio"
-ckpt_dir: null
+ckpt_dir: "/home/pervinco/Models/leash-bio/2024-06-10-22-51-48"
 
 train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
 n_iter: 10
-limit: 200000
+limit: 100000
 radius: 2
 vec_dim: 1024
 

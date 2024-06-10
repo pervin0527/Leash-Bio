@@ -6,12 +6,13 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 
+from time import time
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
 
-from data.dataset import process_smiles_list
-from utils.utils import load_config, prepare_dataset, normalize_ctd
+from utils.utils import load_config, prepare_dataset, save_normalizers
+from data.dataset import process_smiles_list, normalize_ctd, normalize_mol_descriptors
 
 
 def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100, lr=0.01, ff=1.0, n_leaves=30):
@@ -32,6 +33,7 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
     offset_0 = 0
     offset_1 = 0
     for i in range(n_iter):
+        start_time = time()
         con = duckdb.connect()
         try:
             data_0 = con.query(f"""
@@ -55,7 +57,6 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         if data_1.empty:
             con = duckdb.connect()
             try:
-                # binds=1 데이터를 랜덤으로 가져오는 쿼리
                 random_data_1 = con.query(f"""
                     SELECT *
                     FROM parquet_scan('{parquet_path}')
@@ -75,7 +76,7 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         print(f"Iter {i+1} : Dataset shape : {data.shape}, binds=0 count : {binds_0_count}, binds=1 count : {binds_1_count}")
 
         smiles_list = data['molecule_smiles'].tolist()
-        results = process_smiles_list(smiles_list, radius, dim, desc=False)
+        results = process_smiles_list(smiles_list, radius, dim, desc=True)
 
         fingerprints = [result['fingerprint'] for result in results]
         data['fingerprints'] = fingerprints
@@ -85,7 +86,9 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         data = pd.concat([data, fingerprint_df], axis=1)
         data.drop(columns=['fingerprints'], inplace=True)
         print("Preprocess 1 : FingerPrints Merged.")
-
+        print(f"Time for Fingerprints Merging: {time() - start_time:.2f} seconds")
+        
+        start_time = time()
         if i == 0:
             ctd_df = pd.read_parquet(ctd_path, engine='pyarrow')
             ctd_df = normalize_ctd(ctd_df, utils_dir)
@@ -95,11 +98,28 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
 
         data = pd.merge(data, ctd_df, on='protein_name', how='left')
         print("Preprocess 2 : Protein CTD Merged.")
+        print(f"Time for Protein CTD Merging: {time() - start_time:.2f} seconds")
 
+        start_time = time()
         protein_one_hot = pd.get_dummies(data['protein_name'], prefix='protein_')
         data = pd.concat([data, protein_one_hot], axis=1)
         data.drop(columns=['protein_name'], inplace=True)
         print("Preprocess 3 : protein_name Onehot encoded.")
+        print(f"Time for Protein One-hot Encoding: {time() - start_time:.2f} seconds")
+
+        start_time = time()
+        descriptors_list = [result['descriptors'] for result in results]
+        descriptor_df = pd.DataFrame(descriptors_list)
+        excluded_descriptors = descriptor_df.columns[descriptor_df.isna().any()].tolist()
+        descriptor_df.drop(columns=excluded_descriptors, inplace=True)
+        descriptor_df, preprocessor = normalize_mol_descriptors(descriptor_df)
+        
+        normalizer_path = os.path.join(utils_dir, 'descriptor_normalizer.pkl')
+        save_normalizers(preprocessor, normalizer_path)
+        
+        data = pd.concat([data, descriptor_df], axis=1)
+        print("Preprocess 4 : Normalized Molecule Descriptor Merged.")
+        print(f"Time for Molecule Descriptor Normalization: {time() - start_time:.2f} seconds")
 
         exclude_columns = ['id', 'buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles', 'molecule_smiles']
         data.drop(columns=exclude_columns, inplace=True)

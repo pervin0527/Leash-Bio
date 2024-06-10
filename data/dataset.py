@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import pickle
 
 import duckdb
 import requests
@@ -10,7 +11,8 @@ import multiprocessing as mp
 import pyarrow.parquet as pq
 
 from multiprocessing import Pool, cpu_count
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, MaxAbsScaler, RobustScaler
 
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -189,6 +191,58 @@ def process_smiles_list(smiles_list, radius, dim, desc=True):
     with mp.Pool() as pool:
         results = pool.starmap(process_row, [(smiles, radius, dim, desc) for smiles in smiles_list])
     return results
+
+
+def determine_scaler(column, data):
+    if data[column].min() >= 0:
+        # If column has no negative values, use MinMaxScaler
+        return MinMaxScaler()
+    elif np.any(np.abs(data[column]) > 1):
+        # If column has values greater than 1 in absolute value, use StandardScaler
+        return StandardScaler()
+    elif np.all(np.abs(data[column]) <= 1):
+        # If column values are between -1 and 1, use MaxAbsScaler
+        return MaxAbsScaler()
+    else:
+        # Default to RobustScaler
+        return RobustScaler()
+
+
+def normalize_mol_descriptors(df):
+    transformers = [(col, determine_scaler(col, df), [col]) for col in df.columns]
+    preprocessor = ColumnTransformer(transformers=transformers, remainder='passthrough')
+    df_normalized = preprocessor.fit_transform(df)
+    df_normalized = pd.DataFrame(df_normalized, columns=df.columns)
+    
+    return df_normalized, preprocessor
+
+
+def normalize_ctd(ctd_df, utils_dir):
+    # Initialize scalers
+    min_max_scaler = MinMaxScaler()
+    standard_scaler = StandardScaler()
+
+    # Apply Min-Max normalization to columns with prefix '_Polarizability' and '_SolventAccessibility'
+    polarizability_columns = [col for col in ctd_df.columns if '_Polarizability' in col]
+    solvent_accessibility_columns = [col for col in ctd_df.columns if '_SolventAccessibility' in col]
+    ctd_df[polarizability_columns] = min_max_scaler.fit_transform(ctd_df[polarizability_columns])
+    ctd_df[solvent_accessibility_columns] = min_max_scaler.fit_transform(ctd_df[solvent_accessibility_columns])
+
+    # Save Min-Max Scaler and column names
+    with open(os.path.join(utils_dir, 'min_max_scaler.pkl'), 'wb') as f:
+        pickle.dump((min_max_scaler, polarizability_columns, solvent_accessibility_columns), f)
+
+    # Apply Z-score normalization to columns with prefix '_SecondaryStr' and '_Hydrophobicity'
+    secondary_str_columns = [col for col in ctd_df.columns if '_SecondaryStr' in col]
+    hydrophobicity_columns = [col for col in ctd_df.columns if '_Hydrophobicity' in col]
+    ctd_df[secondary_str_columns] = standard_scaler.fit_transform(ctd_df[secondary_str_columns])
+    ctd_df[hydrophobicity_columns] = standard_scaler.fit_transform(ctd_df[hydrophobicity_columns])
+
+    # Save Standard Scaler and column names
+    with open(os.path.join(utils_dir, 'standard_scaler.pkl'), 'wb') as f:
+        pickle.dump((standard_scaler, secondary_str_columns, hydrophobicity_columns), f)
+    
+    return ctd_df
 
 
 def preprocess_molecule(parquet_path, ctd_file_path, output_path, output_file_name, radius=2, dim=1024, chunk_size=10000, debug=False):
