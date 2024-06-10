@@ -1,4 +1,5 @@
 import os
+import gc
 import json
 import duckdb
 import numpy as np
@@ -32,31 +33,39 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
     offset_1 = 0
     for i in range(n_iter):
         con = duckdb.connect()
-        data_0 = con.query(f"""
-            SELECT *
-            FROM parquet_scan('{parquet_path}')
-            WHERE binds = 0
-            ORDER BY random()
-            LIMIT {limit} OFFSET {offset_0}
-        """).df()
-
-        data_1 = con.query(f"""
-            SELECT *
-            FROM parquet_scan('{parquet_path}')
-            WHERE binds = 1
-            ORDER BY random()
-            LIMIT {limit} OFFSET {offset_1}
-        """).df()
-
-        if data_1.empty:
-            random_data = con.query(f"""
+        try:
+            data_0 = con.query(f"""
                 SELECT *
                 FROM parquet_scan('{parquet_path}')
                 WHERE binds = 0
                 ORDER BY random()
-                LIMIT {limit}
+                LIMIT {limit} OFFSET {offset_0}
             """).df()
-            data = pd.concat([data_0, random_data])
+
+            data_1 = con.query(f"""
+                SELECT *
+                FROM parquet_scan('{parquet_path}')
+                WHERE binds = 1
+                ORDER BY random()
+                LIMIT {limit} OFFSET {offset_1}
+            """).df()
+        finally:
+            con.close()
+
+        if data_1.empty:
+            con = duckdb.connect()
+            try:
+                # binds=1 데이터를 랜덤으로 가져오는 쿼리
+                random_data_1 = con.query(f"""
+                    SELECT *
+                    FROM parquet_scan('{parquet_path}')
+                    WHERE binds = 1
+                    ORDER BY random()
+                    LIMIT {limit}
+                """).df()
+                data = pd.concat([data_0, random_data_1])
+            finally:
+                con.close()
         else:
             data = pd.concat([data_0, data_1])
 
@@ -70,6 +79,7 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
 
         fingerprints = [result['fingerprint'] for result in results]
         data['fingerprints'] = fingerprints
+
         fingerprints = data['fingerprints'].apply(lambda x: np.array([int(char) for char in x]))
         fingerprint_df = pd.DataFrame(fingerprints.tolist(), index=data.index)
         data = pd.concat([data, fingerprint_df], axis=1)
@@ -97,9 +107,8 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         features = data.drop(columns=['binds'])
         targets = data['binds'].tolist()
 
+        features = features.astype('float32')
         X_train, X_test, y_train, y_test = train_test_split(features, targets, test_size=0.2, random_state=42)
-        X_train = X_train.astype(float)
-        X_test = X_test.astype(float)
         print(f"Train data shape : {X_train.shape}, {len(y_train)}")
         print(f"Test data shape : {X_test.shape}, {len(y_test)}")
 
@@ -161,6 +170,9 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
 
         offset_0 += limit
         offset_1 += limit
+        
+        del data, X_train, X_test, y_train, y_test, train_data, test_data
+        gc.collect()
 
 
 if __name__ == "__main__":

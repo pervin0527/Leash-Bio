@@ -9,7 +9,7 @@ ckpt_dir: null
 train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-n_iter: 1477
+n_iter: 10
 limit: 200000
 radius: 2
 vec_dim: 1024
