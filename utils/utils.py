@@ -1,5 +1,6 @@
 import os
 import yaml
+import json
 import pickle
 import numpy as np
 import lightgbm as lgb
@@ -107,6 +108,19 @@ def load_models(weights_dir):
         model_path = os.path.join(weights_dir, f'model_{i}.txt')
         model = lgb.Booster(model_file=model_path)
         models.append(model)
+    return models
+
+
+def load_top_k_models(performance_file, k):
+    with open(performance_file, 'r') as f:
+        model_performance = json.load(f)
+    
+    top_k_models_info = sorted(model_performance, key=lambda x: x['roc_auc'], reverse=True)[:k]
+    models = []
+    for model_info in top_k_models_info:
+        model = lgb.Booster(model_file=model_info['model_path'])
+        models.append(model)
+    
     return models
 
 
