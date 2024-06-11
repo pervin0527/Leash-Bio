@@ -1,3 +1,5 @@
+## kaggle competitions submit -c leash-BELKA -f my_submission.csv -m "My submission"
+
 import os
 import json
 import joblib
@@ -9,7 +11,7 @@ import matplotlib.pyplot as plt
 from data.dataset import process_smiles_list
 from utils.utils import load_config, load_models, load_top_k_models, predict_with_models
 
-def plot_feature_importance(weights_dir, k):
+def plot_feature_importance(weights_dir, k, n):
     utils_dir = os.path.join(weights_dir, 'utils')
     performance_file = os.path.join(utils_dir, 'model_performance.json')
     models = load_top_k_models(performance_file, k)
@@ -26,21 +28,37 @@ def plot_feature_importance(weights_dir, k):
 
     avg_feature_importance = {name: np.mean(scores) for name, scores in feature_importance_dict.items()}    
     sorted_features = sorted(avg_feature_importance.items(), key=lambda x: x[1], reverse=True)
-    
-    feature_names, importance_scores = zip(*sorted_features)
+
+    top_n_features = sorted_features[:n]
+    feature_names, importance_scores = zip(*top_n_features)
+
+    grouped_feature_importance = {}
+    for name, score in avg_feature_importance.items():
+        if name.isdigit():
+            group_name = "fingerprint"
+        else:
+            group_name = name
+        if group_name in grouped_feature_importance:
+            grouped_feature_importance[group_name] += score
+        else:
+            grouped_feature_importance[group_name] = score
+
+    sorted_grouped_features = sorted(grouped_feature_importance.items(), key=lambda x: x[1], reverse=True)
+    grouped_feature_names, grouped_importance_scores = zip(*sorted_grouped_features[:n])
+
     plt.figure(figsize=(10, 8))
-    plt.barh(feature_names, importance_scores)
+    plt.barh(grouped_feature_names, grouped_importance_scores)
     plt.xlabel('Average Gain')
-    plt.ylabel('Feature')
-    plt.title(f'Top {k} Models Feature Importance')
+    plt.ylabel('Feature Group')
+    plt.title(f'Top {n} Feature Groups Importance from Top {k} Models')
     plt.gca().invert_yaxis()
     plt.tight_layout()
 
     os.makedirs(f"{weights_dir}/importance_scores", exist_ok=True)
-    importance_plot_path = os.path.join(weights_dir, 'importance_scores', 'feature_importance.png')
+    importance_plot_path = os.path.join(weights_dir, 'importance_scores', 'feature_importance_grouped.png')
     plt.savefig(importance_plot_path)
     plt.close()
-    print(f"Feature importance plot saved to {importance_plot_path}")
+    print(f"Grouped feature importance plot saved to {importance_plot_path}")
 
 
 def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
@@ -62,7 +80,8 @@ def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
 
     while offset < total_rows:
         query = f"""
-        SELECT * FROM '{test_parquet_path}'
+        SELECT id, molecule_smiles, protein_name
+        FROM '{test_parquet_path}'
         LIMIT {chunk_size} 
         OFFSET {offset}
         """
@@ -94,10 +113,11 @@ def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
         
         chunk_df = pd.concat([chunk_df, descriptor_df], axis=1)
 
-        exclude_columns = ['buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles', 'molecule_smiles']
-        chunk_df.drop(columns=exclude_columns, inplace=True)
+        # exclude_columns = ['buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles', 'molecule_smiles']
+        # chunk_df.drop(columns=exclude_columns, inplace=True)
 
-        features = chunk_df.drop(columns=['id']).astype(float)
+        # features = chunk_df.drop(columns=['id']).astype(float)
+        features = chunk_df.drop(columns=['id', 'molecule_smiles', 'binds'])
         predictions = predict_with_models(models, features)
         
         chunk_results = pd.DataFrame({
@@ -124,6 +144,7 @@ if __name__ == "__main__":
     DIM = config['vec_dim']
 
     TOP_K = config['predict_top_k']
+    TOP_N = config['feature_top_n']
 
-    plot_feature_importance(CKPT_DIR, TOP_K)
-    predict(TEST_PARQUET, CKPT_DIR, RADIUS, DIM, TOP_K, LIMIT)
+    plot_feature_importance(CKPT_DIR, TOP_K, TOP_N)
+    # predict(TEST_PARQUET, CKPT_DIR, RADIUS, DIM, TOP_K, LIMIT)

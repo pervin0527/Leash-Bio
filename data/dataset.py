@@ -5,6 +5,7 @@ import pickle
 
 import duckdb
 import requests
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import multiprocessing as mp

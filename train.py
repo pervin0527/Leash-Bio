@@ -36,21 +36,22 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         start_time = time()
         con = duckdb.connect()
         try:
-            data_0 = con.query(f"""
-                SELECT *
+            query_0 = f"""
+                SELECT id, molecule_smiles, protein_name, binds
                 FROM parquet_scan('{parquet_path}')
                 WHERE binds = 0
                 ORDER BY random()
                 LIMIT {limit} OFFSET {offset_0}
-            """).df()
-
-            data_1 = con.query(f"""
-                SELECT *
+            """
+            query_1 = f"""
+                SELECT id, molecule_smiles, protein_name, binds
                 FROM parquet_scan('{parquet_path}')
                 WHERE binds = 1
                 ORDER BY random()
                 LIMIT {limit} OFFSET {offset_1}
-            """).df()
+            """
+            data_0 = con.query(query_0).df()
+            data_1 = con.query(query_1).df()
         finally:
             con.close()
 
@@ -58,7 +59,7 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
             con = duckdb.connect()
             try:
                 random_data_1 = con.query(f"""
-                    SELECT *
+                    SELECT id, molecule_smiles, protein_name, binds
                     FROM parquet_scan('{parquet_path}')
                     WHERE binds = 1
                     ORDER BY random()
@@ -121,10 +122,12 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         print("Preprocess 4 : Normalized Molecule Descriptor Merged.")
         print(f"Time for Molecule Descriptor Normalization: {time() - start_time:.2f} seconds")
 
-        exclude_columns = ['id', 'buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles', 'molecule_smiles']
-        data.drop(columns=exclude_columns, inplace=True)
+        # exclude_columns = ['id', 'buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles', 'molecule_smiles']
+        # data.drop(columns=exclude_columns, inplace=True)
+        # data.to_csv("./feature_sample.csv", index=False)
 
-        features = data.drop(columns=['binds'])
+        # features = data.drop(columns=['binds'])
+        features = data.drop(columns=['id', 'molecule_smiles', 'binds'])
         targets = data['binds'].tolist()
 
         features = features.astype('float32')
