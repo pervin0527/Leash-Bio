@@ -6,16 +6,167 @@ import numpy as np
 import pandas as pd
 import lightgbm as lgb
 
-from time import time
 from datetime import datetime
+from scipy.stats import randint as sp_randint
+from scipy.stats import uniform as sp_uniform
+
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 
-from utils.utils import load_config, prepare_dataset, save_normalizers
-from data.dataset import process_smiles_list, normalize_ctd, normalize_mol_descriptors
+from data.dataset import preprocess_data
+from utils.utils import load_config, prepare_dataset
 
 
-def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100, lr=0.01, ff=1.0, n_leaves=30):
+def parameter_search(parquet_path, ctd_path, limit, radius, dim, save_dir):
+    timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    save_dir = os.path.join(save_dir, timestamp)
+    print(f"Save directory: {save_dir}")
+
+    utils_dir = os.path.join(save_dir, 'utils')
+    weights_dir = os.path.join(save_dir, 'weights')
+    os.makedirs(utils_dir, exist_ok=True)
+    os.makedirs(weights_dir, exist_ok=True)
+
+    performance_file = os.path.join(utils_dir, 'model_performance.json')
+    if not os.path.exists(performance_file):
+        with open(performance_file, 'w') as f:
+            json.dump([], f)
+
+    con = duckdb.connect()
+    try:
+        query_0 = f"""
+            SELECT id, molecule_smiles, protein_name, binds
+            FROM parquet_scan('{parquet_path}')
+            WHERE binds = 0
+            ORDER BY random()
+            LIMIT {limit}
+        """
+        query_1 = f"""
+            SELECT id, molecule_smiles, protein_name, binds
+            FROM parquet_scan('{parquet_path}')
+            WHERE binds = 1
+            ORDER BY random()
+            LIMIT {limit}
+        """
+        data_0 = con.query(query_0).df()
+        data_1 = con.query(query_1).df()
+    finally:
+        con.close()
+
+    if data_1.empty:
+        con = duckdb.connect()
+        try:
+            random_data_1 = con.query(f"""
+                SELECT id, molecule_smiles, protein_name, binds
+                FROM parquet_scan('{parquet_path}')
+                WHERE binds = 1
+                ORDER BY random()
+                LIMIT {limit}
+            """).df()
+            data = pd.concat([data_0, random_data_1])
+        finally:
+            con.close()
+    else:
+        data = pd.concat([data_0, data_1])
+
+    data = data.sample(frac=1).reset_index(drop=True)
+    binds_0_count = data[data['binds'] == 0].shape[0]
+    binds_1_count = data[data['binds'] == 1].shape[0]
+    print(f"Dataset shape: {data.shape}, binds=0 count: {binds_0_count}, binds=1 count: {binds_1_count}")
+
+    # 데이터 전처리
+    smiles_list = data['molecule_smiles'].tolist()
+    data = preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim)
+
+    # 데이터 분할
+    features = data.drop(columns=['id', 'molecule_smiles', 'binds']).astype('float32')
+    targets = data['binds'].tolist()
+    X_train, X_test, y_train, y_test = train_test_split(features, targets, test_size=0.2, random_state=42)
+    print(f"Train data shape: {X_train.shape}, {len(y_train)}")
+    print(f"Test data shape: {X_test.shape}, {len(y_test)}")
+
+    param_dist = {
+        'num_leaves': sp_randint(20, 100),  # num_leaves 범위를 증가
+        'learning_rate': sp_uniform(0.01, 0.1),
+        'feature_fraction': sp_uniform(0.7, 0.3),
+        'max_depth': sp_randint(3, 15),  # max_depth 범위를 증가
+        'min_child_samples': sp_randint(5, 50),  # min_child_samples 추가 및 범위 설정
+        'min_split_gain': sp_uniform(0.0, 0.1),  # min_split_gain 추가 및 범위 설정
+        'reg_alpha': sp_uniform(0, 0.1),
+        'reg_lambda': sp_uniform(0, 0.1)
+    }
+
+    lgb_estimator = lgb.LGBMClassifier(
+        boosting_type='gbdt',
+        objective='binary',
+        metric='binary_logloss',
+        n_estimators=100,
+        device='gpu',
+        gpu_platform_id=0,
+        gpu_device_id=0,
+    )
+
+    print("Starting RandomizedSearchCV for hyperparameter tuning...")
+    rs = RandomizedSearchCV(
+        estimator=lgb_estimator,
+        param_distributions=param_dist,
+        n_iter=3,
+        scoring='roc_auc',
+        cv=5,
+        verbose=2,
+        random_state=42,
+        n_jobs=-1
+    )
+
+    rs.fit(X_train, y_train)
+    print("Hyperparameter tuning completed.")
+
+    best_params = rs.best_params_
+    print(f"Best Parameters: {best_params}")
+
+    print("Starting model training with best parameters...")
+    lgb_estimator.set_params(**best_params)
+    lgb_estimator.fit(
+        X_train,
+        y_train,
+        eval_set=[(X_test, y_test)],
+        eval_names=['valid_0'],
+        early_stopping_rounds=10,
+        verbose=10
+    )
+    print("Model training completed.")
+
+    y_pred = lgb_estimator.predict(X_test)
+    y_pred_binary = [1 if x > 0.5 else 0 for x in y_pred]
+
+    accuracy = accuracy_score(y_test, y_pred_binary)
+    roc_auc = roc_auc_score(y_test, y_pred)
+
+    model_info = {
+        'accuracy': accuracy,
+        'roc_auc': roc_auc,
+        'best_params': best_params,
+        'model_path': os.path.join(weights_dir, 'best_model.txt')
+    }
+
+    lgb_estimator.booster_.save_model(model_info['model_path'])
+    print(f"Best Model Saved.\n")
+
+    with open(performance_file, 'r') as f:
+        model_performance = json.load(f)
+    model_performance.append(model_info)
+
+    with open(performance_file, 'w') as f:
+        json.dump(model_performance, f, indent=4)
+
+    del data, X_train, X_test, y_train, y_test
+    gc.collect()
+
+    print("Training process completed.")
+
+
+def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100, lr=0.01, ff=1.0, n_leaves=31):
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     save_dir = os.path.join(save_dir, timestamp)
     print(save_dir)
@@ -33,7 +184,6 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
     offset_0 = 0
     offset_1 = 0
     for i in range(n_iter):
-        start_time = time()
         con = duckdb.connect()
         try:
             query_0 = f"""
@@ -74,59 +224,10 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         data = data.sample(frac=1).reset_index(drop=True)
         binds_0_count = data[data['binds'] == 0].shape[0]
         binds_1_count = data[data['binds'] == 1].shape[0]
-        print(f"Iter {i+1} : Dataset shape : {data.shape}, binds=0 count : {binds_0_count}, binds=1 count : {binds_1_count}")
+        print(f"Dataset shape: {data.shape}, binds=0 count: {binds_0_count}, binds=1 count: {binds_1_count}")
 
         smiles_list = data['molecule_smiles'].tolist()
-        results = process_smiles_list(smiles_list, radius, dim, desc=True)
-
-        fingerprints = [result['fingerprint'] for result in results]
-        data['fingerprints'] = fingerprints
-
-        fingerprints = data['fingerprints'].apply(lambda x: np.array([int(char) for char in x]))
-        fingerprint_df = pd.DataFrame(fingerprints.tolist(), index=data.index)
-        data = pd.concat([data, fingerprint_df], axis=1)
-        data.drop(columns=['fingerprints'], inplace=True)
-        print("Preprocess 1 : FingerPrints Merged.")
-        print(f"Time for Fingerprints Merging: {time() - start_time:.2f} seconds")
-        
-        start_time = time()
-        if i == 0:
-            ctd_df = pd.read_parquet(ctd_path, engine='pyarrow')
-            ctd_df = normalize_ctd(ctd_df, utils_dir)
-            ctd_df.to_parquet(os.path.join(f"{save_dir}/utils", 'normalized_ctd.parquet'), engine='pyarrow')
-        else:
-            ctd_df = pd.read_parquet(f"{save_dir}/utils/normalized_ctd.parquet", engine='pyarrow')
-
-        data = pd.merge(data, ctd_df, on='protein_name', how='left')
-        print("Preprocess 2 : Protein CTD Merged.")
-        print(f"Time for Protein CTD Merging: {time() - start_time:.2f} seconds")
-
-        start_time = time()
-        protein_one_hot = pd.get_dummies(data['protein_name'], prefix='protein_')
-        data = pd.concat([data, protein_one_hot], axis=1)
-        data.drop(columns=['protein_name'], inplace=True)
-        print("Preprocess 3 : protein_name Onehot encoded.")
-        print(f"Time for Protein One-hot Encoding: {time() - start_time:.2f} seconds")
-
-        start_time = time()
-        descriptors_list = [result['descriptors'] for result in results]
-        descriptor_df = pd.DataFrame(descriptors_list)
-        excluded_descriptors = descriptor_df.columns[descriptor_df.isna().any()].tolist()
-        descriptor_df.drop(columns=excluded_descriptors, inplace=True)
-        descriptor_df, preprocessor = normalize_mol_descriptors(descriptor_df)
-        
-        normalizer_path = os.path.join(utils_dir, 'descriptor_normalizer.pkl')
-        save_normalizers(preprocessor, normalizer_path)
-        
-        data = pd.concat([data, descriptor_df], axis=1)
-        print("Preprocess 4 : Normalized Molecule Descriptor Merged.")
-        print(f"Time for Molecule Descriptor Normalization: {time() - start_time:.2f} seconds")
-
-        # exclude_columns = ['id', 'buildingblock1_smiles', 'buildingblock2_smiles', 'buildingblock3_smiles', 'molecule_smiles']
-        # data.drop(columns=exclude_columns, inplace=True)
-        # data.to_csv("./feature_sample.csv", index=False)
-
-        # features = data.drop(columns=['binds'])
+        data = preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim)
         features = data.drop(columns=['id', 'molecule_smiles', 'binds'])
         targets = data['binds'].tolist()
 
@@ -226,4 +327,5 @@ if __name__ == "__main__":
     if PREPARE:
         prepare_dataset(TRAIN_PARQUET, TEST_PARQUET, OUTPUT_DIR, UNIPROT_DICT, RADIUS, DIM, DEBUG)
 
+    # parameter_search(TRAIN_PARQUET, f"{OUTPUT_DIR}/ctd.parquet", LIMIT, RADIUS, DIM, SAVE_DIR)
     train(TRAIN_PARQUET, f"{OUTPUT_DIR}/ctd.parquet", LIMIT, RADIUS, DIM, N_ITER, SAVE_DIR, NBR, LR, FF, N_LEAVES)

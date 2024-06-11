@@ -42,10 +42,6 @@ def prepare_dataset(train_parq_path, test_parq_path, output_path, uniprot_dict, 
                         debug=debug)
 
 
-def save_normalizers(preprocessor, save_path):
-    joblib.dump(preprocessor, save_path)
-
-
 def load_normalizers(load_path):
     return joblib.load(load_path)
 

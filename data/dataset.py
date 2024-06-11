@@ -2,7 +2,7 @@ import os
 import time
 import json
 import pickle
-
+import joblib
 import duckdb
 import requests
 import numpy as np
@@ -321,3 +321,48 @@ def preprocess_molecule(parquet_path, ctd_file_path, output_path, output_file_na
 
         writer.close()
         con.close()
+
+
+def save_normalizers(preprocessor, save_path):
+    joblib.dump(preprocessor, save_path)
+
+
+def preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim):
+    # Fingerprints 생성
+    results = process_smiles_list(smiles_list, radius, dim, desc=True)
+    fingerprints = [result['fingerprint'] for result in results]
+    data['fingerprints'] = fingerprints
+
+    fingerprints = data['fingerprints'].apply(lambda x: np.array([int(char) for char in x]))
+    fingerprint_df = pd.DataFrame(fingerprints.tolist(), index=data.index)
+    data = pd.concat([data, fingerprint_df], axis=1)
+    data.drop(columns=['fingerprints'], inplace=True)
+    print("Preprocess 1: Fingerprints merged.")
+
+    # CTD 데이터 병합
+    ctd_df = pd.read_parquet(ctd_path, engine='pyarrow')
+    ctd_df = normalize_ctd(ctd_df, save_dir)
+    ctd_df.to_parquet(os.path.join(f"{save_dir}/utils", 'normalized_ctd.parquet'), engine='pyarrow')
+    data = pd.merge(data, ctd_df, on='protein_name', how='left')
+    print("Preprocess 2: Protein CTD merged.")
+
+    # 단백질 이름 One-Hot 인코딩
+    protein_one_hot = pd.get_dummies(data['protein_name'], prefix='protein_')
+    data = pd.concat([data, protein_one_hot], axis=1)
+    data.drop(columns=['protein_name'], inplace=True)
+    print("Preprocess 3: protein_name Onehot encoded.")
+
+    # Molecule Descriptors 정규화
+    descriptors_list = [result['descriptors'] for result in results]
+    descriptor_df = pd.DataFrame(descriptors_list)
+    excluded_descriptors = descriptor_df.columns[descriptor_df.isna().any()].tolist()
+    descriptor_df.drop(columns=excluded_descriptors, inplace=True)
+    descriptor_df, preprocessor = normalize_mol_descriptors(descriptor_df)
+
+    normalizer_path = os.path.join(save_dir, 'descriptor_normalizer.pkl')
+    save_normalizers(preprocessor, normalizer_path)
+
+    data = pd.concat([data, descriptor_df], axis=1)
+    print("Preprocess 4: Normalized Molecule Descriptor merged.")
+
+    return data

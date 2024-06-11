@@ -9,15 +9,18 @@ ckpt_dir: null ## "/home/pervinco/Models/leash-bio/2024-06-10-23-05-58"
 train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-n_iter: 20
-limit: 10000
+n_iter: 10
+limit: 100000
 radius: 4
-vec_dim: 1024
+vec_dim: 768
 
-num_boost: 100
-learning_rate: 0.05
+num_boost: 10000
+learning_rate: 0.005
 feature_frac: 1.0
-num_leaves: 31
+num_leaves: 1000
+max_depth: 50
+l1_lambda: 0.0
+l2_lambda: 0.2
 
 predict_top_k: 10
 feature_top_n: 20
