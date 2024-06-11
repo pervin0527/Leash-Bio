@@ -191,14 +191,16 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
                 FROM parquet_scan('{parquet_path}')
                 WHERE binds = 0
                 ORDER BY random()
-                LIMIT {limit} OFFSET {offset_0}
+                LIMIT {limit} 
+                OFFSET {offset_0}
             """
             query_1 = f"""
                 SELECT id, molecule_smiles, protein_name, binds
                 FROM parquet_scan('{parquet_path}')
                 WHERE binds = 1
                 ORDER BY random()
-                LIMIT {limit} OFFSET {offset_1}
+                LIMIT {limit} 
+                OFFSET {offset_1}
             """
             data_0 = con.query(query_0).df()
             data_1 = con.query(query_1).df()
@@ -232,7 +234,7 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         targets = data['binds'].tolist()
 
         features = features.astype('float32')
-        X_train, X_test, y_train, y_test = train_test_split(features, targets, test_size=0.2, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(features, targets, test_size=0.01, random_state=42)
         print(f"Train data shape : {X_train.shape}, {len(y_train)}")
         print(f"Test data shape : {X_test.shape}, {len(y_test)}")
 

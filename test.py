@@ -117,7 +117,7 @@ def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
         # chunk_df.drop(columns=exclude_columns, inplace=True)
 
         # features = chunk_df.drop(columns=['id']).astype(float)
-        features = chunk_df.drop(columns=['id', 'molecule_smiles', 'binds'])
+        features = chunk_df.drop(columns=['id', 'molecule_smiles'])
         predictions = predict_with_models(models, features)
         
         chunk_results = pd.DataFrame({
@@ -147,4 +147,4 @@ if __name__ == "__main__":
     TOP_N = config['feature_top_n']
 
     plot_feature_importance(CKPT_DIR, TOP_K, TOP_N)
-    # predict(TEST_PARQUET, CKPT_DIR, RADIUS, DIM, TOP_K, LIMIT)
+    predict(TEST_PARQUET, CKPT_DIR, RADIUS, DIM, TOP_K, LIMIT)

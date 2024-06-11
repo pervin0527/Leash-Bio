@@ -3,26 +3,26 @@ prepare: false
 
 data_dir: "/home/pervinco/Datasets/leash-bio"
 output_dir: "/home/pervinco/Datasets/leash-bio/preprocessed"
-save_dir: "/home/pervinco/Models/leash-bio"
-ckpt_dir: null ## "/home/pervinco/Models/leash-bio/2024-06-10-23-05-58"
+save_dir: "/home/pervinco/Leash-Bio/runs"
+ckpt_dir: "/home/pervinco/Leash-Bio/runs/2024-06-11-16-18-22"
 
 train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-n_iter: 10
-limit: 100000
+n_iter: 5
+limit: 250000
 radius: 4
-vec_dim: 768
+vec_dim: 1024
 
 num_boost: 10000
 learning_rate: 0.005
 feature_frac: 1.0
-num_leaves: 1000
+num_leaves: 62
 max_depth: 50
 l1_lambda: 0.0
 l2_lambda: 0.2
 
-predict_top_k: 10
+predict_top_k: 5
 feature_top_n: 20
 
 target_proteins:

@@ -359,7 +359,7 @@ def preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim):
     descriptor_df.drop(columns=excluded_descriptors, inplace=True)
     descriptor_df, preprocessor = normalize_mol_descriptors(descriptor_df)
 
-    normalizer_path = os.path.join(save_dir, 'descriptor_normalizer.pkl')
+    normalizer_path = os.path.join(f"{save_dir}/utils" 'descriptor_normalizer.pkl')
     save_normalizers(preprocessor, normalizer_path)
 
     data = pd.concat([data, descriptor_df], axis=1)
