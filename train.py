@@ -15,158 +15,10 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 
 from data.dataset import preprocess_data
-from utils.utils import load_config, prepare_dataset
+from util.utils import load_config
 
 
-def parameter_search(parquet_path, ctd_path, limit, radius, dim, save_dir):
-    timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    save_dir = os.path.join(save_dir, timestamp)
-    print(f"Save directory: {save_dir}")
-
-    utils_dir = os.path.join(save_dir, 'utils')
-    weights_dir = os.path.join(save_dir, 'weights')
-    os.makedirs(utils_dir, exist_ok=True)
-    os.makedirs(weights_dir, exist_ok=True)
-
-    performance_file = os.path.join(utils_dir, 'model_performance.json')
-    if not os.path.exists(performance_file):
-        with open(performance_file, 'w') as f:
-            json.dump([], f)
-
-    con = duckdb.connect()
-    try:
-        query_0 = f"""
-            SELECT molecule_smiles, protein_name, binds
-            FROM parquet_scan('{parquet_path}')
-            WHERE binds = 0
-            ORDER BY random()
-            LIMIT {limit}
-        """
-        query_1 = f"""
-            SELECT molecule_smiles, protein_name, binds
-            FROM parquet_scan('{parquet_path}')
-            WHERE binds = 1
-            ORDER BY random()
-            LIMIT {limit}
-        """
-        data_0 = con.query(query_0).df()
-        data_1 = con.query(query_1).df()
-    finally:
-        con.close()
-
-    if data_1.empty:
-        con = duckdb.connect()
-        try:
-            random_data_1 = con.query(f"""
-                SELECT molecule_smiles, protein_name, binds
-                FROM parquet_scan('{parquet_path}')
-                WHERE binds = 1
-                ORDER BY random()
-                LIMIT {limit}
-            """).df()
-            data = pd.concat([data_0, random_data_1])
-        finally:
-            con.close()
-    else:
-        data = pd.concat([data_0, data_1])
-
-    data = data.sample(frac=1).reset_index(drop=True)
-    binds_0_count = data[data['binds'] == 0].shape[0]
-    binds_1_count = data[data['binds'] == 1].shape[0]
-    print(f"Dataset shape: {data.shape}, binds=0 count: {binds_0_count}, binds=1 count: {binds_1_count}")
-
-    # 데이터 전처리
-    smiles_list = data['molecule_smiles'].tolist()
-    data = preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim)
-
-    # 데이터 분할
-    features = data.drop(columns=['id', 'molecule_smiles', 'binds']).astype('float32')
-    targets = data['binds'].tolist()
-    X_train, X_test, y_train, y_test = train_test_split(features, targets, test_size=0.2, random_state=42)
-    print(f"Train data shape: {X_train.shape}, {len(y_train)}")
-    print(f"Test data shape: {X_test.shape}, {len(y_test)}")
-
-    param_dist = {
-        'num_leaves': sp_randint(20, 100),  # num_leaves 범위를 증가
-        'learning_rate': sp_uniform(0.01, 0.1),
-        'feature_fraction': sp_uniform(0.7, 0.3),
-        'max_depth': sp_randint(3, 15),  # max_depth 범위를 증가
-        'min_child_samples': sp_randint(5, 50),  # min_child_samples 추가 및 범위 설정
-        'min_split_gain': sp_uniform(0.0, 0.1),  # min_split_gain 추가 및 범위 설정
-        'reg_alpha': sp_uniform(0, 0.1),
-        'reg_lambda': sp_uniform(0, 0.1)
-    }
-
-    lgb_estimator = lgb.LGBMClassifier(
-        boosting_type='gbdt',
-        objective='binary',
-        metric='binary_logloss',
-        n_estimators=100,
-        device='gpu',
-        gpu_platform_id=0,
-        gpu_device_id=0,
-    )
-
-    print("Starting RandomizedSearchCV for hyperparameter tuning...")
-    rs = RandomizedSearchCV(
-        estimator=lgb_estimator,
-        param_distributions=param_dist,
-        n_iter=3,
-        scoring='roc_auc',
-        cv=5,
-        verbose=2,
-        random_state=42,
-        n_jobs=-1
-    )
-
-    rs.fit(X_train, y_train)
-    print("Hyperparameter tuning completed.")
-
-    best_params = rs.best_params_
-    print(f"Best Parameters: {best_params}")
-
-    print("Starting model training with best parameters...")
-    lgb_estimator.set_params(**best_params)
-    lgb_estimator.fit(
-        X_train,
-        y_train,
-        eval_set=[(X_test, y_test)],
-        eval_names=['valid_0'],
-        early_stopping_rounds=10,
-        verbose=10
-    )
-    print("Model training completed.")
-
-    y_pred = lgb_estimator.predict(X_test)
-    y_pred_binary = [1 if x > 0.5 else 0 for x in y_pred]
-
-    accuracy = accuracy_score(y_test, y_pred_binary)
-    roc_auc = roc_auc_score(y_test, y_pred)
-
-    model_info = {
-        'accuracy': accuracy,
-        'roc_auc': roc_auc,
-        'best_params': best_params,
-        'model_path': os.path.join(weights_dir, 'best_model.txt')
-    }
-
-    lgb_estimator.booster_.save_model(model_info['model_path'])
-    print(f"Best Model Saved.\n")
-
-    with open(performance_file, 'r') as f:
-        model_performance = json.load(f)
-    model_performance.append(model_info)
-
-    with open(performance_file, 'w') as f:
-        json.dump(model_performance, f, indent=4)
-
-    del data, X_train, X_test, y_train, y_test
-    gc.collect()
-
-    print("Training process completed.")
-
-
-def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100, lr=0.01, ff=1.0, n_leaves=31, l1_reg=0.0, l2_reg=0.2, drop_prob=0.2):
+def train(cfg):
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     save_dir = os.path.join(save_dir, timestamp)
     print(save_dir)
@@ -183,23 +35,23 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
 
     offset_0 = 0
     offset_1 = 0
-    for i in range(n_iter):
+    for i in range(cfg['n_iter']):
         con = duckdb.connect()
         try:
             query_0 = f"""
                 SELECT id, molecule_smiles, protein_name, binds
-                FROM parquet_scan('{parquet_path}')
+                FROM parquet_scan('{cfg['train_parquet']}')
                 WHERE binds = 0
                 ORDER BY random()
-                LIMIT {limit} 
+                LIMIT {cfg['limit']} 
                 OFFSET {offset_0}
             """
             query_1 = f"""
                 SELECT id, molecule_smiles, protein_name, binds
-                FROM parquet_scan('{parquet_path}')
+                FROM parquet_scan('{cfg['train_parquet']}')
                 WHERE binds = 1
                 ORDER BY random()
-                LIMIT {limit} 
+                LIMIT {cfg['limit']} 
                 OFFSET {offset_1}
             """
             data_0 = con.query(query_0).df()
@@ -212,10 +64,10 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
             try:
                 random_data_1 = con.query(f"""
                     SELECT id, molecule_smiles, protein_name, binds
-                    FROM parquet_scan('{parquet_path}')
+                    FROM parquet_scan('{cfg['train_parquet']}')
                     WHERE binds = 1
                     ORDER BY random()
-                    LIMIT {limit}
+                    LIMIT {cfg['limit']}
                 """).df()
                 data = pd.concat([data_0, random_data_1])
             finally:
@@ -229,7 +81,14 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         print(f"Dataset shape: {data.shape}, binds=0 count: {binds_0_count}, binds=1 count: {binds_1_count}")
 
         smiles_list = data['molecule_smiles'].tolist()
-        data = preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim)
+        data = preprocess_data(data, 
+                               smiles_list, 
+                               f"{cfg['data_dir']}/ctd.parquet", 
+                               save_dir, 
+                               cfg['radius'], 
+                               cfg['dim'], 
+                               is_train=True, 
+                               important_features=['SMR_VSA4', 'SlogP_VSA1', 'fr_phenol', 'NumSaturatedCarbocycles', 'fr_Ar_NH'])
         features = data.drop(columns=['id', 'molecule_smiles', 'binds'])
         targets = data['binds'].tolist()
 
@@ -245,22 +104,22 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
             'objective': 'binary',
             'metric': 'binary_logloss',
             'boosting_type': 'gbdt',
-            'num_leaves': n_leaves,
-            'learning_rate': lr,
-            'feature_fraction': ff,
+            'num_leaves': cfg['num_leaves'],
+            'learning_rate': cfg['learning_rate'],
+            'feature_fraction': cfg['feature_frac'],
             'device': 'gpu',
             'gpu_platform_id': 0,
             'gpu_device_id': 0,
-            'l2_regularization' : l2_reg,
-            'l1_regularization' : l1_reg,
-            'drop_rate' : drop_prob
+            'l2_regularization' : cfg['l2_lambda'],
+            'l1_regularization' : cfg['l1_lambda'],
+            'drop_rate' : cfg['drop_prob']
         }
 
         evals_result = {}
         model = lgb.train(
             params,
             train_data,
-            num_boost_round=nbr,
+            num_boost_round=cfg['num_boost'],
             valid_sets=[test_data],
             callbacks=[
                 lgb.log_evaluation(10),
@@ -297,8 +156,8 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
         with open(performance_file, 'w') as f:
             json.dump(model_performance, f, indent=4)
 
-        offset_0 += limit
-        offset_1 += limit
+        offset_0 += cfg['limit']
+        offset_1 += cfg['limit']
         
         del data, X_train, X_test, y_train, y_test, train_data, test_data
         gc.collect()
@@ -306,34 +165,6 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
 
 if __name__ == "__main__":
     config_path = 'config.yaml'
-    config = load_config(config_path)
+    cfg = load_config(config_path)
 
-    DEBUG = config['debug']
-    PREPARE = config['prepare']
-
-    DATA_DIR = config['data_dir']
-    OUTPUT_DIR = config['output_dir']
-    SAVE_DIR = config['save_dir']
-
-    TRAIN_PARQUET = config['train_parquet']
-    TEST_PARQUET = config['test_parquet']
-    UNIPROT_DICT = config['uniprot_dicts']
-
-    N_ITER = config['n_iter']
-    LIMIT = config['limit']
-    RADIUS = config['radius']
-    DIM = config['vec_dim']
-
-    NBR = config['num_boost']
-    LR = config['learning_rate']
-    FF = config['feature_frac']
-    N_LEAVES = config['num_leaves']
-    L1_LAMBDA = config['l1_lambda']
-    L2_LAMBDA = config['l2_lambda']
-    DROP_PROB = config['drop_prob']
-
-    if PREPARE:
-        prepare_dataset(TRAIN_PARQUET, TEST_PARQUET, OUTPUT_DIR, UNIPROT_DICT, RADIUS, DIM, DEBUG)
-
-    # parameter_search(TRAIN_PARQUET, f"{OUTPUT_DIR}/ctd.parquet", LIMIT, RADIUS, DIM, SAVE_DIR)
-    train(TRAIN_PARQUET, f"{OUTPUT_DIR}/ctd.parquet", LIMIT, RADIUS, DIM, N_ITER, SAVE_DIR, NBR, LR, FF, N_LEAVES, L1_LAMBDA, L2_LAMBDA, DROP_PROB)
+    train(cfg)

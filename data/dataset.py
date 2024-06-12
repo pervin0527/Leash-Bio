@@ -246,88 +246,11 @@ def normalize_ctd(ctd_df, utils_dir):
     return ctd_df
 
 
-def preprocess_molecule(parquet_path, ctd_file_path, output_path, output_file_name, radius=2, dim=1024, chunk_size=10000, debug=False):
-    ctd_df = pd.read_parquet(ctd_file_path, engine="pyarrow")
-    num_workers = cpu_count()
-    pool = Pool(num_workers)
-
-    offset = 0
-    first_chunk = True
-    con = duckdb.connect()
-    
-    excluded_descriptors_file = f"{output_path}/excluded_descriptors.txt"
-    used_descriptors_file = f"{output_path}/used_descriptors.txt"
-    
-    with open(excluded_descriptors_file, 'w') as excl_file, open(used_descriptors_file, 'w') as used_file:
-        while True:
-            start_time = time.time()
-            
-            if debug and offset == 20000:
-                break
-            
-            chunk = con.execute(f"""SELECT *
-                                    FROM parquet_scan('{parquet_path}')
-                                    LIMIT {chunk_size} 
-                                    OFFSET {offset}
-                                 """).fetch_df()
-
-            if chunk.empty:
-                break
-
-            smiles_list = chunk['molecule_smiles'].tolist()
-            results = process_smiles_list(smiles_list, radius, dim)
-
-            fingerprints = [result['fingerprint'] for result in results]
-            descriptors_list = [result['descriptors'] for result in results]
-            
-            chunk['fingerprints'] = fingerprints
-            descriptor_df = pd.DataFrame(descriptors_list)
-            excluded_descriptors = descriptor_df.columns[descriptor_df.isna().any()].tolist()
-            descriptor_df.drop(columns=excluded_descriptors, inplace=True)
-            used_descriptor = descriptor_df.columns.tolist()
-
-            if first_chunk:
-                print(f"제외된 descriptors: {len(excluded_descriptors)}, 사용된 descriptors: {len(used_descriptor)}")
-                # excl_file.write("Excluded Descriptors:\n")
-                excl_file.write("\n".join(excluded_descriptors) + "\n")
-                # used_file.write("Used Descriptors:\n")
-                used_file.write("\n".join(used_descriptor) + "\n")
-
-            # CTD 데이터 병합 (protein_name 기준)
-            merged_chunk = pd.merge(chunk, ctd_df, on='protein_name', how='left')
-
-            # protein_name 원핫인코딩
-            protein_one_hot = pd.get_dummies(merged_chunk['protein_name'], prefix='protein')
-            merged_chunk = pd.concat([merged_chunk, protein_one_hot], axis=1)
-            merged_chunk.drop(columns=['protein_name'], inplace=True)
-
-            merged_chunk = pd.concat([merged_chunk, descriptor_df], axis=1)
-            
-            table = pa.Table.from_pandas(merged_chunk)
-
-            if first_chunk:
-                writer = pq.ParquetWriter(f"{output_path}/{output_file_name}.parquet", table.schema)
-                first_chunk = False
-
-            writer.write_table(table)
-            offset += chunk_size
-
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            print(f"Processed offset: {offset} saved to {output_path}/{output_file_name}.parquet Time taken: {elapsed_time:.2f} seconds")
-
-        pool.close()
-        pool.join()
-
-        writer.close()
-        con.close()
-
-
 def save_normalizers(preprocessor, save_path):
     joblib.dump(preprocessor, save_path)
 
 
-def preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim):
+def preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim, is_train=True, important_features=[]):
     # Fingerprints 생성
     results = process_smiles_list(smiles_list, radius, dim, desc=True)
     fingerprints = [result['fingerprint'] for result in results]
@@ -342,7 +265,8 @@ def preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim):
     # CTD 데이터 병합
     ctd_df = pd.read_parquet(ctd_path, engine='pyarrow')
     ctd_df = normalize_ctd(ctd_df, save_dir)
-    ctd_df.to_parquet(os.path.join(f"{save_dir}/utils", 'normalized_ctd.parquet'), engine='pyarrow')
+    if is_train:
+        ctd_df.to_parquet(os.path.join(f"{save_dir}/utils", 'normalized_ctd.parquet'), engine='pyarrow')
     data = pd.merge(data, ctd_df, on='protein_name', how='left')
     print("Preprocess 2: Protein CTD merged.")
 
@@ -359,11 +283,13 @@ def preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim):
     descriptor_df.drop(columns=excluded_descriptors, inplace=True)
     descriptor_df, preprocessor = normalize_mol_descriptors(descriptor_df)
 
-    normalizer_path = os.path.join(f"{save_dir}/utils" 'descriptor_normalizer.pkl')
-    save_normalizers(preprocessor, normalizer_path)
+    if is_train:
+        normalizer_path = os.path.join(f"{save_dir}/utils" 'descriptor_normalizer.pkl')
+        save_normalizers(preprocessor, normalizer_path)
 
-    important_features = ['SMR_VSA4', 'SlogP_VSA1', 'fr_phenol', 'NumSaturatedCarbocycles', 'fr_Ar_NH']
-    descriptor_df = descriptor_df[important_features]
+    if important_features:
+        # important_features = ['SMR_VSA4', 'SlogP_VSA1', 'fr_phenol', 'NumSaturatedCarbocycles', 'fr_Ar_NH']
+        descriptor_df = descriptor_df[important_features]
 
     data = pd.concat([data, descriptor_df], axis=1)
     print("Preprocess 4: Normalized Molecule Descriptor merged.")

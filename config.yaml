@@ -2,7 +2,6 @@ debug: false
 prepare: false
 
 data_dir: "/home/pervinco/Datasets/leash-bio"
-output_dir: "/home/pervinco/Datasets/leash-bio/preprocessed"
 save_dir: "/home/pervinco/Leash-Bio/runs"
 ckpt_dir: "/home/pervinco/Leash-Bio/runs/2024-06-12-14-48-33"
 
@@ -23,7 +22,7 @@ l1_lambda: 0.0
 l2_lambda: 0.2
 drop_prob: 0.2
 
-predict_top_k: 5
+predict_top_k: 10
 feature_top_n: 20
 
 target_proteins:
