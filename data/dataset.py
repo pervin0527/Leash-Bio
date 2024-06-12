@@ -362,6 +362,9 @@ def preprocess_data(data, smiles_list, ctd_path, save_dir, radius, dim):
     normalizer_path = os.path.join(f"{save_dir}/utils" 'descriptor_normalizer.pkl')
     save_normalizers(preprocessor, normalizer_path)
 
+    important_features = ['SMR_VSA4', 'SlogP_VSA1', 'fr_phenol', 'NumSaturatedCarbocycles', 'fr_Ar_NH']
+    descriptor_df = descriptor_df[important_features]
+
     data = pd.concat([data, descriptor_df], axis=1)
     print("Preprocess 4: Normalized Molecule Descriptor merged.")
 

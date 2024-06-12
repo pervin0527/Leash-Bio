@@ -36,14 +36,14 @@ def parameter_search(parquet_path, ctd_path, limit, radius, dim, save_dir):
     con = duckdb.connect()
     try:
         query_0 = f"""
-            SELECT id, molecule_smiles, protein_name, binds
+            SELECT molecule_smiles, protein_name, binds
             FROM parquet_scan('{parquet_path}')
             WHERE binds = 0
             ORDER BY random()
             LIMIT {limit}
         """
         query_1 = f"""
-            SELECT id, molecule_smiles, protein_name, binds
+            SELECT molecule_smiles, protein_name, binds
             FROM parquet_scan('{parquet_path}')
             WHERE binds = 1
             ORDER BY random()
@@ -58,7 +58,7 @@ def parameter_search(parquet_path, ctd_path, limit, radius, dim, save_dir):
         con = duckdb.connect()
         try:
             random_data_1 = con.query(f"""
-                SELECT id, molecule_smiles, protein_name, binds
+                SELECT molecule_smiles, protein_name, binds
                 FROM parquet_scan('{parquet_path}')
                 WHERE binds = 1
                 ORDER BY random()
@@ -166,7 +166,7 @@ def parameter_search(parquet_path, ctd_path, limit, radius, dim, save_dir):
     print("Training process completed.")
 
 
-def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100, lr=0.01, ff=1.0, n_leaves=31):
+def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100, lr=0.01, ff=1.0, n_leaves=31, l1_reg=0.0, l2_reg=0.2, drop_prob=0.2):
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
     save_dir = os.path.join(save_dir, timestamp)
     print(save_dir)
@@ -250,7 +250,10 @@ def train(parquet_path, ctd_path, limit, radius, dim, n_iter, save_dir, nbr=100,
             'feature_fraction': ff,
             'device': 'gpu',
             'gpu_platform_id': 0,
-            'gpu_device_id': 0
+            'gpu_device_id': 0,
+            'l2_regularization' : l2_reg,
+            'l1_regularization' : l1_reg,
+            'drop_rate' : drop_prob
         }
 
         evals_result = {}
@@ -325,9 +328,12 @@ if __name__ == "__main__":
     LR = config['learning_rate']
     FF = config['feature_frac']
     N_LEAVES = config['num_leaves']
+    L1_LAMBDA = config['l1_lambda']
+    L2_LAMBDA = config['l2_lambda']
+    DROP_PROB = config['drop_prob']
 
     if PREPARE:
         prepare_dataset(TRAIN_PARQUET, TEST_PARQUET, OUTPUT_DIR, UNIPROT_DICT, RADIUS, DIM, DEBUG)
 
     # parameter_search(TRAIN_PARQUET, f"{OUTPUT_DIR}/ctd.parquet", LIMIT, RADIUS, DIM, SAVE_DIR)
-    train(TRAIN_PARQUET, f"{OUTPUT_DIR}/ctd.parquet", LIMIT, RADIUS, DIM, N_ITER, SAVE_DIR, NBR, LR, FF, N_LEAVES)
+    train(TRAIN_PARQUET, f"{OUTPUT_DIR}/ctd.parquet", LIMIT, RADIUS, DIM, N_ITER, SAVE_DIR, NBR, LR, FF, N_LEAVES, L1_LAMBDA, L2_LAMBDA, DROP_PROB)
