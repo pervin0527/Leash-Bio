@@ -2,7 +2,7 @@ debug: false
 prepare: false
 
 data_dir: "/home/pervinco/Datasets/leash-bio"
-save_dir: "/home/pervinco/Leash-Bio/runs"
+save_dir: "/home/pervinco/Leash-Bio/runs/new_dataset"
 ckpt_dir: "/home/pervinco/Leash-Bio/runs/2024-06-12-14-48-33"
 
 train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"

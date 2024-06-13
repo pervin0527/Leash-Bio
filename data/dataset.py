@@ -229,19 +229,20 @@ def normalize_ctd(ctd_df, utils_dir):
     ctd_df[polarizability_columns] = min_max_scaler.fit_transform(ctd_df[polarizability_columns])
     ctd_df[solvent_accessibility_columns] = min_max_scaler.fit_transform(ctd_df[solvent_accessibility_columns])
 
-    # Save Min-Max Scaler and column names
-    with open(os.path.join(utils_dir, 'min_max_scaler.pkl'), 'wb') as f:
-        pickle.dump((min_max_scaler, polarizability_columns, solvent_accessibility_columns), f)
-
     # Apply Z-score normalization to columns with prefix '_SecondaryStr' and '_Hydrophobicity'
     secondary_str_columns = [col for col in ctd_df.columns if '_SecondaryStr' in col]
     hydrophobicity_columns = [col for col in ctd_df.columns if '_Hydrophobicity' in col]
     ctd_df[secondary_str_columns] = standard_scaler.fit_transform(ctd_df[secondary_str_columns])
     ctd_df[hydrophobicity_columns] = standard_scaler.fit_transform(ctd_df[hydrophobicity_columns])
 
-    # Save Standard Scaler and column names
-    with open(os.path.join(utils_dir, 'standard_scaler.pkl'), 'wb') as f:
-        pickle.dump((standard_scaler, secondary_str_columns, hydrophobicity_columns), f)
+
+    # # Save Min-Max Scaler and column names
+    # with open(os.path.join(utils_dir, 'min_max_scaler.pkl'), 'wb') as f:
+    #     pickle.dump((min_max_scaler, polarizability_columns, solvent_accessibility_columns), f)
+
+    # # Save Standard Scaler and column names
+    # with open(os.path.join(utils_dir, 'standard_scaler.pkl'), 'wb') as f:
+    #     pickle.dump((standard_scaler, secondary_str_columns, hydrophobicity_columns), f)
     
     return ctd_df
 

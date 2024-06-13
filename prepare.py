@@ -1,13 +1,15 @@
 import os
 import duckdb
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import gc
 
 from util.utils import load_config
 from data.dataset import preprocess_data
 
 def generate_datasets(cfg):
-    os.makedirs(cfg['save_dir'], exist_ok=True)
+    os.makedirs(f"{cfg['save_dir']}/utils", exist_ok=True)
     print(cfg['save_dir'])
     save_file = os.path.join(cfg['save_dir'], 'train_added.parquet')
     
@@ -23,6 +25,11 @@ def generate_datasets(cfg):
         
         offset = 0
         processed_data_count = 0
+
+        # Create an empty Parquet file with the appropriate schema if it doesn't exist
+        if not os.path.exists(save_file):
+            empty_df = pd.DataFrame()
+            empty_df.to_parquet(save_file)
 
         while True:
             query = f"""
@@ -47,7 +54,14 @@ def generate_datasets(cfg):
             
             smiles_list = data['molecule_smiles'].tolist()
             processed_data = preprocess_data(data, smiles_list, f"{cfg['data_dir']}/ctd.parquet", cfg['save_dir'], cfg['radius'], cfg['vec_dim'], is_train=True)            
-            processed_data.to_parquet(save_file, engine='pyarrow', index=False, append=True)
+            
+            # Ensure all column names are strings
+            processed_data.columns = [str(col) for col in processed_data.columns]
+
+            # Append processed data to the Parquet file
+            table = pa.Table.from_pandas(processed_data)
+            with pq.ParquetWriter(save_file, table.schema, compression='snappy', use_dictionary=True) as writer:
+                writer.write_table(table)
 
             del data
             del processed_data
