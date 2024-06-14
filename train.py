@@ -7,12 +7,8 @@ import pandas as pd
 import lightgbm as lgb
 
 from datetime import datetime
-from scipy.stats import randint as sp_randint
-from scipy.stats import uniform as sp_uniform
-
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
 
 from data.dataset import preprocess_data
 from util.utils import load_config
@@ -20,7 +16,7 @@ from util.utils import load_config
 
 def train(cfg):
     timestamp = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    save_dir = os.path.join(save_dir, timestamp)
+    save_dir = os.path.join(cfg["save_dir"], timestamp)
     print(save_dir)
     
     utils_dir = os.path.join(save_dir, 'utils')
@@ -86,7 +82,7 @@ def train(cfg):
                                f"{cfg['data_dir']}/ctd.parquet", 
                                save_dir, 
                                cfg['radius'], 
-                               cfg['dim'], 
+                               cfg['vec_dim'], 
                                is_train=True, 
                                important_features=['SMR_VSA4', 'SlogP_VSA1', 'fr_phenol', 'NumSaturatedCarbocycles', 'fr_Ar_NH'])
         features = data.drop(columns=['id', 'molecule_smiles', 'binds'])

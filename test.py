@@ -108,6 +108,7 @@ def predict(test_parquet_path, saved_dir, radius, dim, k=5, chunk_size=10000):
 
         chunk_results.to_csv(result_file, mode='a', header=False, index=False)        
         offset += chunk_size
+        print()
 
     conn.close()
     print("Prediction results saved to ./my_submission.csv")
