@@ -2,14 +2,15 @@ debug: false
 prepare: false
 
 data_dir: "/home/pervinco/Datasets/leash-bio"
-save_dir: "/home/pervinco/Leash-Bio/runs"
-ckpt_dir: "runs/2024-06-14-18-37-19" # "/home/pervinco/Leash-Bio/runs/2024-06-12-14-48-33"
+save_dir: "./runs"
+ckpt_dir: "./runs/2024-06-15-15-28-33" # "/home/pervinco/Leash-Bio/runs/2024-06-12-14-48-33"
 
-train_parquet: "/home/pervinco/Datasets/leash-bio/train.parquet"
+train_parquet: "/home/pervinco/Datasets/leash-bio/train_split.parquet"
+valid_parquet: "/home/pervinco/Datasets/leash-bio/valid_split.parquet"
 test_parquet: "/home/pervinco/Datasets/leash-bio/test.parquet"
 
-n_iter: 10
-limit: 100000
+n_iter: 20
+limit: 50000
 radius: 2 ## radius 2일 때와 4일 때에 대한 실험 결과 측정하고 첨부할 것.
 vec_dim: 2048
 
@@ -19,7 +20,7 @@ feature_frac: 1.0
 num_leaves: 62
 max_depth: 50
 l1_lambda: 0.0 ## L1, L2, drop_prob에 대해 적용 전과 적용 후 그리고 값의 설정에 대해 각각 실험할 것.
-l2_lambda: 0.0
+l2_lambda: 0.2
 drop_prob: 0.0
 
 predict_top_k: 10
