@@ -14,7 +14,7 @@ from util.utils import load_config, load_models, load_top_k_models, predict_with
 def plot_feature_importance(cfg):
     utils_dir = os.path.join(cfg['ckpt_dir'], 'utils')
     performance_file = os.path.join(utils_dir, 'model_performance.json')
-    models = load_top_k_models(performance_file, k)
+    models = load_top_k_models(performance_file, cfg['predict_top_k'])
 
     feature_importance_dict = {}
     for model in models:
